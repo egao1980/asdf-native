@@ -10,6 +10,7 @@
            #:native-library-not-found-tried
            #:host-pair
            #:default-file-names
+           #:file-name-variants
            #:search-directories
            #:find-native-library
            #:load-native-library))

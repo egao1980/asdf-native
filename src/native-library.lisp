@@ -17,9 +17,12 @@
 
 (defclass native-library (asdf:component)
   ((names :initarg :names :initform nil
-          :documentation "File names to try, in order. Default: DEFAULT-FILE-NAMES.
-A plist (:darwin (...) :linux (...) :windows (...) :unix (...)) picks per OS;
-a plain list applies everywhere.")
+          :documentation "File names to try, in order, instead of the generated variants.
+A plain list applies everywhere. A plist (:darwin (...) :linux (...) :windows (...)
+:unix (...)) overrides only the OSes it names; the rest use FILE-NAME-VARIANTS.")
+   (versions :initarg :versions :initform nil
+             :documentation "ABI versions to try before the unversioned name, e.g. (\"3\"):
+libfoo.3.dylib, libfoo.so.3, foo-3.dll / libfoo-3.dll.")
    (env :initarg :env :initform nil
         :documentation "Override variable naming a directory. Default <NAME>_NATIVE.")
    (system-fallback :initarg :system :initform nil :reader native-library-system-fallback-p
@@ -55,24 +58,42 @@ through the dynamic linker's own search (a system library).")
           #+(or x86-64 x64 amd64) "amd64" #+(or arm64 aarch64) "arm64"
           #-(or x86-64 x64 amd64 arm64 aarch64) "unknown"))
 
-(defun default-file-names (name)
-  "foo → libfoo.dylib (macOS), foo.dll (Windows), libfoo.so (else)."
-  (list #+darwin (format nil "lib~A.dylib" name)
-        #+windows (format nil "~A.dll" name)
-        #-(or darwin windows) (format nil "lib~A.so" name)))
-
 (defun %os-key ()
   #+darwin :darwin #+windows :windows #+linux :linux
   #-(or darwin windows linux) :unix)
 
-(defun native-library-names (lib)
-  (let ((names (slot-value lib 'names)))
-    (cond ((null names) (default-file-names (asdf:component-name lib)))
+(defun file-name-variants (name &key versions (os (%os-key)))
+  "File names for library NAME on OS, most specific first: each of VERSIONS,
+then unversioned.
+  :darwin   libfoo.3.dylib … libfoo.dylib
+  :windows  foo-3.dll libfoo-3.dll … foo.dll libfoo.dll  (MSVC and MinGW naming)
+  else      libfoo.so.3 … libfoo.so"
+  (append
+   (loop for v in versions
+         append (ecase os
+                  (:darwin (list (format nil "lib~A.~A.dylib" name v)))
+                  (:windows (list (format nil "~A-~A.dll" name v) (format nil "lib~A-~A.dll" name v)))
+                  ((:linux :unix) (list (format nil "lib~A.so.~A" name v)))))
+   (ecase os
+     (:darwin (list (format nil "lib~A.dylib" name)))
+     (:windows (list (format nil "~A.dll" name) (format nil "lib~A.dll" name)))
+     ((:linux :unix) (list (format nil "lib~A.so" name))))))
+
+(defun default-file-names (name)
+  "FILE-NAME-VARIANTS of NAME on this host, without versions."
+  (file-name-variants name))
+
+(defun native-library-names (lib &key (os (%os-key)))
+  "File names LIB tries on OS, in order."
+  (let ((names (slot-value lib 'names))
+        (generated (lambda ()
+                     (file-name-variants (asdf:component-name lib)
+                                         :versions (slot-value lib 'versions) :os os))))
+    (cond ((null names) (funcall generated))
           ((keywordp (first names))
-           (let ((os (%os-key)))
-             (or (getf names os)
-                 (and (member os '(:darwin :linux)) (getf names :unix))
-                 (default-file-names (asdf:component-name lib)))))
+           (or (getf names os)
+               (and (member os '(:darwin :linux)) (getf names :unix))
+               (funcall generated)))
           (t names))))
 
 (defun native-library-env (lib)

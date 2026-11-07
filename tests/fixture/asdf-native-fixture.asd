@@ -7,4 +7,8 @@
                 :names (:darwin ("librenamed.1.dylib" "librenamed.dylib")
                         :unix ("librenamed.so.1" "librenamed.so")
                         :windows ("renamed-1.dll"))
-                :env "RENAMED_DIR")))
+                :env "RENAMED_DIR")
+               ;; Generated variants with an ABI version; Windows alone overridden.
+               (:native-library "verdemo"
+                :versions ("2")
+                :names (:windows ("verdemo-2-x64.dll")))))
