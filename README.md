@@ -58,6 +58,22 @@ plist applies only to the OSes it names (`:unix` covers macOS and Linux):
 `file-name-variants` shows the names for any OS:
 `(asdf-native:file-name-variants "uv" :versions '("1") :os :windows)`.
 
+## Optional libraries and extra directories
+
+```lisp
+(:native-library "ggml-cuda" :optional t)   ; missing → warning, system loads without it
+(:native-library "llama"
+ :directories ("lib/{pair}-{env:LLAMA_CPP_FLAVOR}/"   ; skipped when the variable is unset
+               ""))                                    ; the system root (a make build)
+```
+
+`:directories` entries come after the env override and before `native/`. They
+are relative to the system root unless absolute, and the templates are
+`{pair}`, `{os}`, `{arch}` and `{env:VAR}`. An optional library that is missing
+signals the warning `native-library-missing` and leaves its loaded path NIL.
+`(asdf-native:library-loaded-path "llama-cpp" "llama")` lets a system's own
+`*-available-p` check which libraries were loaded.
+
 ## When it's missing
 
 Loading signals `asdf-native:native-library-not-found`, whose report lists

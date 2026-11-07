@@ -11,4 +11,7 @@
                ;; Generated variants with an ABI version; Windows alone overridden.
                (:native-library "verdemo"
                 :versions ("2")
-                :names (:windows ("verdemo-2-x64.dll")))))
+                :names (:windows ("verdemo-2-x64.dll")))
+               (:native-library "optional-lib" :optional t)
+               (:native-library "flavored"
+                :directories ("lib/{pair}-{env:FLAVORDEMO}/" "" "/opt/flavored/{os}/{arch}/"))))
