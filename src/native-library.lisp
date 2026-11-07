@@ -41,9 +41,11 @@ through the dynamic linker's own search (a system library).")
    (tried :initarg :tried :reader native-library-not-found-tried))
   (:report (lambda (c s)
              (let ((lib (native-library-not-found-component c)))
-               (format s "Native library ~A of system ~A not found. Tried:~{~%  ~A~}~%~
-                          Set ~A to a directory holding it, or install the ~
-                          system's platform overlay."
+               ;; No ~<newline> directives: a CRLF checkout breaks them.
+               (format s (concatenate 'string
+                                      "Native library ~A of system ~A not found. Tried:~{~%  ~A~}~%"
+                                      "Set ~A to a directory holding it, or install the "
+                                      "system's platform overlay.")
                        (asdf:component-name lib)
                        (asdf:component-name (asdf:component-system lib))
                        (native-library-not-found-tried c)
