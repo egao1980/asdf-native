@@ -36,6 +36,10 @@ system loads without it; LOADED-PATH stays NIL. For GPU runtimes and the like.")
 before native/. Strings, relative to the system root unless absolute; \"\" is the
 root itself. Templates: {pair} {os} {arch} {env:VAR}. A directory whose {env:VAR}
 is unset or empty is skipped.")
+   (fallback-directories :initarg :fallback-directories :initform nil
+                         :documentation "Like :DIRECTORIES, but searched after native/ and
+lib/<os>-<arch>/ (and before :SYSTEM's linker search): a package manager's
+directory (\"/opt/homebrew/opt/icu4c/lib/\") that must not shadow the overlay.")
    (loaded-path :initform nil :accessor native-library-loaded-path))
   (:documentation "A shared library the system loads at ASDF load, by absolute path."))
 
@@ -146,22 +150,27 @@ referenced variable is unset or empty."
              out))
           (setf i (1+ close)))))))
 
+(defun %expand-directories (templates root)
+  (loop for template in templates
+        for dir = (expand-directory-template template)
+        when dir
+          collect (let ((d (uiop:ensure-directory-pathname dir)))
+                    (cond ((uiop:absolute-pathname-p d) d)
+                          (root (merge-pathnames d root))
+                          (t d)))))
+
 (defun search-directories (lib)
-  "Env override, then :DIRECTORIES, then <system>/native/, then <system>/lib/<os>-<arch>/."
+  "Env override, :DIRECTORIES, <system>/native/, <system>/lib/<os>-<arch>/,
+then :FALLBACK-DIRECTORIES."
   (let ((env (uiop:getenv (native-library-env lib)))
         (root (asdf:system-source-directory (asdf:component-system lib))))
     (append (when (and env (plusp (length env)))
               (list (uiop:ensure-directory-pathname env)))
-            (loop for template in (slot-value lib 'directories)
-                  for dir = (expand-directory-template template)
-                  when dir
-                    collect (let ((d (uiop:ensure-directory-pathname dir)))
-                              (cond ((uiop:absolute-pathname-p d) d)
-                                    (root (merge-pathnames d root))
-                                    (t d))))
+            (%expand-directories (slot-value lib 'directories) root)
             (when root
               (list (merge-pathnames "native/" root)
-                    (merge-pathnames (format nil "lib/~A/" (host-pair)) root))))))
+                    (merge-pathnames (format nil "lib/~A/" (host-pair)) root)))
+            (%expand-directories (slot-value lib 'fallback-directories) root))))
 
 (defun find-native-library (lib)
   "→ truename of the first NAME in the first directory that has one, and the
