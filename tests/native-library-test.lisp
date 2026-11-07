@@ -25,7 +25,7 @@
 (deftest file-names
   (let ((names (an:default-file-names "foo-cl")))
     (ok (equal names
-               #+darwin '("libfoo-cl.dylib") #+windows '("foo-cl.dll")
+               #+darwin '("libfoo-cl.dylib") #+windows '("foo-cl.dll" "libfoo-cl.dll")
                #-(or darwin windows) '("libfoo-cl.so"))))
   (ok (equal (an:native-library-names (lib "renamed"))
              #+darwin '("librenamed.1.dylib" "librenamed.dylib")
@@ -75,7 +75,9 @@
     (ok (signals (an:load-native-library c) 'an:native-library-not-found))
     (let ((condition (handler-case (an:load-native-library c)
                        (an:native-library-not-found (e) e))))
-      (ok (= 2 (length (an:native-library-not-found-tried condition))) "both directories tried")
+      (ok (= (* 2 (length (an:native-library-names c)))
+             (length (an:native-library-not-found-tried condition)))
+          "every name in both directories tried")
       (ok (search "ABSENT_LIB_NATIVE" (princ-to-string condition)) "report names the override"))
     (ok (null (handler-bind ((an:native-library-not-found
                                (lambda (e) (declare (ignore e)) (invoke-restart 'continue))))
@@ -116,4 +118,6 @@
                      (ok (equal (file-namestring (an:find-native-library v))
                                 (first (an:native-library-names v)))
                          "versioned variant found"))))
-            (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))))
+            ;; Windows keeps a loaded DLL locked; leave the temp dir there.
+            (handler-case (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)
+              (file-error () nil)))))))
