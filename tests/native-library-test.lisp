@@ -25,13 +25,33 @@
 (deftest file-names
   (let ((names (an:default-file-names "foo-cl")))
     (ok (equal names
-               #+darwin '("libfoo-cl.dylib") #+windows '("foo-cl.dll")
+               #+darwin '("libfoo-cl.dylib") #+windows '("foo-cl.dll" "libfoo-cl.dll")
                #-(or darwin windows) '("libfoo-cl.so"))))
   (ok (equal (an:native-library-names (lib "renamed"))
              #+darwin '("librenamed.1.dylib" "librenamed.dylib")
              #+windows '("renamed-1.dll")
              #-(or darwin windows) '("librenamed.so.1" "librenamed.so"))
       "per-OS plist, :unix covering darwin and linux when no exact key"))
+
+(deftest-parametrize file-name-variants
+    ((os versions expected)
+     (:darwin  nil        '("libfoo.dylib"))
+     (:linux   nil        '("libfoo.so"))
+     (:windows nil        '("foo.dll" "libfoo.dll"))
+     (:darwin  '("3")     '("libfoo.3.dylib" "libfoo.dylib"))
+     (:linux   '("3")     '("libfoo.so.3" "libfoo.so"))
+     (:unix    '("3")     '("libfoo.so.3" "libfoo.so"))
+     (:windows '("3")     '("foo-3.dll" "libfoo-3.dll" "foo.dll" "libfoo.dll"))
+     (:linux   '("1" "0") '("libfoo.so.1" "libfoo.so.0" "libfoo.so")))
+  (ok (equal (an:file-name-variants "foo" :versions versions :os os) expected)))
+
+(deftest-parametrize partial-override
+    ((os expected)
+     (:darwin  '("libverdemo.2.dylib" "libverdemo.dylib"))
+     (:linux   '("libverdemo.so.2" "libverdemo.so"))
+     (:windows '("verdemo-2-x64.dll")))
+  (ok (equal (an:native-library-names (lib "verdemo") :os os) expected)
+      ":names for one OS leaves the others generated"))
 
 (deftest env-names
   (ok (string= (an:native-library-env (lib "andemo")) "ANDEMO_NATIVE"))
@@ -55,7 +75,9 @@
     (ok (signals (an:load-native-library c) 'an:native-library-not-found))
     (let ((condition (handler-case (an:load-native-library c)
                        (an:native-library-not-found (e) e))))
-      (ok (= 2 (length (an:native-library-not-found-tried condition))) "both directories tried")
+      (ok (= (* 2 (length (an:native-library-names c)))
+             (length (an:native-library-not-found-tried condition)))
+          "every name in both directories tried")
       (ok (search "ABSENT_LIB_NATIVE" (princ-to-string condition)) "report names the override"))
     (ok (null (handler-bind ((an:native-library-not-found
                                (lambda (e) (declare (ignore e)) (invoke-restart 'continue))))
@@ -79,6 +101,8 @@
           (uiop:run-program (list cc "-shared" "-fPIC" "-o" (uiop:native-namestring out)
                                   (uiop:native-namestring (merge-pathnames "andemo.c" *fixture-dir*)))
                             :error-output :string)
+          ;; The same object under verdemo's versioned name only.
+          (uiop:copy-file out (merge-pathnames (first (an:native-library-names (lib "verdemo"))) dir))
           (unwind-protect
                (with-env ("ANDEMO_NATIVE" (uiop:native-namestring dir))
                  (let ((c (lib "andemo")))
@@ -88,5 +112,12 @@
                    (ok (member (truename dir) cffi:*foreign-library-directories* :test #'equal)
                        "directory pushed for its dependencies")
                    (ok (= 43 (cffi:foreign-funcall "andemo_answer" :int 1 :int)) "symbol callable")
-                   (ok (asdf:operation-done-p (asdf:make-operation 'asdf:load-op) c) "done once loaded")))
-            (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))))
+                   (ok (asdf:operation-done-p (asdf:make-operation 'asdf:load-op) c) "done once loaded"))
+                 (with-env ("VERDEMO_NATIVE" (uiop:native-namestring dir))
+                   (let ((v (lib "verdemo")))
+                     (ok (equal (file-namestring (an:find-native-library v))
+                                (first (an:native-library-names v)))
+                         "versioned variant found"))))
+            ;; Windows keeps a loaded DLL locked; leave the temp dir there.
+            (handler-case (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)
+              (file-error () nil)))))))

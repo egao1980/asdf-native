@@ -29,19 +29,34 @@ soname can't take its place. Its directory goes onto
 `cffi:*foreign-library-directories*`, so the libraries it depends on resolve
 there too. `LD_LIBRARY_PATH` is never needed.
 
-## Options
+## Name variants
+
+With no options, `(:native-library "foo")` tries the names below. `:versions`
+puts the versioned names first, most specific first:
+
+| OS | `(:native-library "foo" :versions ("3"))` tries |
+| --- | --- |
+| macOS | `libfoo.3.dylib`, `libfoo.dylib` |
+| Linux / other Unix | `libfoo.so.3`, `libfoo.so` |
+| Windows | `foo-3.dll`, `libfoo-3.dll`, `foo.dll`, `libfoo.dll` (MSVC and MinGW naming) |
+
+Several versions are tried in the order given: `:versions ("1" "0")`.
+
+`:names` replaces the generated names: a plain list applies to every OS, and a
+plist applies only to the OSes it names (`:unix` covers macOS and Linux):
 
 ```lisp
-(:native-library "crypto"                 ; several components load in order:
- :names (:darwin ("libcrypto.3.dylib" "libcrypto.dylib")   ; per OS; :unix covers
-         :unix ("libcrypto.so.3" "libcrypto.so")           ; darwin and linux
-         :windows ("libcrypto-3-x64.dll"))
- :env "CL_STACK_SSL_NATIVE"
- :system t)                               ; not found → dlopen the first name
-(:native-library "ssl" :names (...))      ; after crypto
+(:native-library "crypto"                   ; several components load in order
+ :versions ("3")                            ; libcrypto.3.dylib, libcrypto.so.3 …
+ :names (:windows ("libcrypto-3-x64.dll"))  ; OpenSSL's own Windows name
+ :env "CL_STACK_SSL_NATIVE")
+(:native-library "ssl" :versions ("3") :names (:windows ("libssl-3-x64.dll")))
+
+(:native-library "uv" :versions ("1") :system t)   ; not found → dlopen libuv.so.1 &c.
 ```
 
-The default names are `lib<name>.dylib`, `<name>.dll` and `lib<name>.so`.
+`file-name-variants` shows the names for any OS:
+`(asdf-native:file-name-variants "uv" :versions '("1") :os :windows)`.
 
 ## When it's missing
 
@@ -54,4 +69,4 @@ the component.
 ## API
 
 - `find-native-library`, `load-native-library`, `search-directories`
-- `native-library-loaded-path`, `host-pair`, `default-file-names`
+- `native-library-names`, `file-name-variants`, `native-library-loaded-path`, `host-pair`
