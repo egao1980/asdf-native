@@ -15,4 +15,5 @@
                (:native-library "optional-lib" :optional t)
                (:native-library "optional-system-lib" :optional t :system t)
                (:native-library "flavored"
-                :directories ("lib/{pair}-{env:FLAVORDEMO}/" "" "/opt/flavored/{os}/{arch}/"))))
+                :directories ("lib/{pair}-{env:FLAVORDEMO}/" "" "/opt/flavored/{os}/{arch}/")
+                :fallback-directories ("/opt/pkgmgr/{os}/"))))
