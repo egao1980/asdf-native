@@ -67,6 +67,11 @@ plist applies only to the OSes it names (`:unix` covers macOS and Linux):
                ""))                                    ; the system root (a make build)
 ```
 
+`:fallback-directories` take the same templates but are searched after
+`native/` and `lib/<os>-<arch>/`, so a package manager's directory never takes
+priority over the overlay:
+`(:native-library "icuuc" :versions ("79") :fallback-directories ("/opt/homebrew/opt/icu4c/lib/"))`.
+
 `:directories` entries come after the env override and before `native/`. They
 are relative to the system root unless absolute, and the templates are
 `{pair}`, `{os}`, `{arch}` and `{env:VAR}`. An optional library that is missing
