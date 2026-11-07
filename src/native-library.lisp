@@ -191,31 +191,43 @@ new components); skip those."
   (unless (%shared-object-loaded-p path)
     (cffi:load-foreign-library (uiop:native-namestring path))))
 
+(defun %load-from-system (lib)
+  "Try each name through the dynamic linker's own search. → the name that
+loaded, or NIL."
+  (dolist (name (native-library-names lib))
+    (handler-case (progn (cffi:load-foreign-library name) (return name))
+      (cffi:load-foreign-library-error () nil))))
+
 (defun load-native-library (lib)
-  "Load LIB once per image. Restarts on NATIVE-LIBRARY-NOT-FOUND: USE-VALUE
-(a pathname to load instead), CONTINUE (skip; the system loads without it)."
+  "Load LIB once per image: a search directory, then (with :SYSTEM T) the
+system's own libraries. Missing and :OPTIONAL → warning NATIVE-LIBRARY-MISSING,
+NIL. Missing otherwise → NATIVE-LIBRARY-NOT-FOUND with restarts USE-VALUE (a
+pathname to load instead) and CONTINUE (skip; the system loads without it)."
   (or (native-library-loaded-path lib)
       (multiple-value-bind (path tried) (find-native-library lib)
-        (cond (path
-               (%load-path path)
-               (setf (native-library-loaded-path lib) path))
-              ((native-library-optional-p lib)
-               (warn 'native-library-missing :component lib :tried tried)
-               nil)
-              ((native-library-system-fallback-p lib)
-               (let ((name (first (native-library-names lib))))
-                 (cffi:load-foreign-library name)
-                 (setf (native-library-loaded-path lib) name)))
-              (t
-               (restart-case (error 'native-library-not-found :component lib :tried tried)
-                 (use-value (path)
-                   :report "Load a library from a pathname you supply."
-                   :interactive (lambda () (format *query-io* "Path: ") (list (read-line *query-io*)))
-                   (%load-path (truename path))
-                   (setf (native-library-loaded-path lib) (truename path)))
-                 (continue ()
-                   :report "Skip this library."
-                   nil)))))))
+        (let ((system (and (null path) (native-library-system-fallback-p lib)
+                           (%load-from-system lib))))
+          (when (and (null path) (native-library-system-fallback-p lib))
+            (setf tried (append tried (mapcar (lambda (n) (format nil "~A (system search)" n))
+                                              (native-library-names lib)))))
+          (cond (path
+                 (%load-path path)
+                 (setf (native-library-loaded-path lib) path))
+                (system
+                 (setf (native-library-loaded-path lib) system))
+                ((native-library-optional-p lib)
+                 (warn 'native-library-missing :component lib :tried tried)
+                 nil)
+                (t
+                 (restart-case (error 'native-library-not-found :component lib :tried tried)
+                   (use-value (path)
+                     :report "Load a library from a pathname you supply."
+                     :interactive (lambda () (format *query-io* "Path: ") (list (read-line *query-io*)))
+                     (%load-path (truename path))
+                     (setf (native-library-loaded-path lib) (truename path)))
+                   (continue ()
+                     :report "Skip this library."
+                     nil))))))))
 
 ;;; ASDF plumbing: nothing to compile, no input or output files.
 

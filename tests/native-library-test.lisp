@@ -116,6 +116,14 @@
     (ok (null (an:library-loaded-path "asdf-native-fixture" "optional-lib")))
     (ok (null (an:library-loaded-path "asdf-native-fixture" "no-such-component")))))
 
+(deftest optional-with-system-fallback
+  (let ((c (lib "optional-system-lib")))
+    (let ((w (handler-case (an:load-native-library c)
+               (an:native-library-missing (e) e))))
+      (ok (typep w 'an:native-library-missing) "system search failed too → warning, not error")
+      (ok (some (lambda (p) (search "(system search)" p)) (an:native-library-not-found-tried w))
+          "the system search is listed as tried"))))
+
 (deftest not-found
   (let ((c (lib "absent-lib")))
     (ok (null (an:find-native-library c)))
