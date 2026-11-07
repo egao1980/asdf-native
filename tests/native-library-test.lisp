@@ -69,6 +69,61 @@
     (with-env ("ANDEMO_NATIVE" "")
       (ok (= 2 (length (an:search-directories (lib "andemo")))) "empty env is ignored"))))
 
+(deftest-parametrize directory-templates
+    ((template expected)
+     ("lib/{pair}/" (format nil "lib/~A/" (an:host-pair)))
+     ("{os}-{arch}" (an:host-pair))
+     ("plain/" "plain/")
+     ("" ""))
+  (ok (equal (an:expand-directory-template template) expected)))
+
+(deftest directory-template-env
+  (with-env ("FLAVORDEMO" "cuda")
+    (ok (equal (an:expand-directory-template "lib/{pair}-{env:FLAVORDEMO}/")
+               (format nil "lib/~A-cuda/" (an:host-pair)))))
+  (with-env ("FLAVORDEMO" "")
+    (ok (null (an:expand-directory-template "lib/{pair}-{env:FLAVORDEMO}/"))
+        "unset variable → directory skipped"))
+  (ok (signals (an:expand-directory-template "{nope}") 'error) "unknown key")
+  (ok (signals (an:expand-directory-template "{pair") 'error) "unclosed brace"))
+
+(deftest extra-directories
+  (let* ((root (asdf:system-source-directory (fixture-system)))
+         (pair (an:host-pair))
+         (tail (list (namestring (merge-pathnames "native/" root))
+                     (namestring (merge-pathnames (format nil "lib/~A/" pair) root)))))
+    (with-env ("FLAVORED_NATIVE" "")
+      (with-env ("FLAVORDEMO" "cuda")
+        (ok (equal (mapcar #'namestring (an:search-directories (lib "flavored")))
+                   (list* (namestring (merge-pathnames (format nil "lib/~A-cuda/" pair) root))
+                          (namestring root)
+                          (format nil "/opt/flavored/~A/" (substitute #\/ #\- pair))
+                          tail))
+              "flavor dir, root, absolute dir, then the defaults"))
+      (with-env ("FLAVORDEMO" "")
+        (ok (equal (mapcar #'namestring (an:search-directories (lib "flavored")))
+                   (list* (namestring root)
+                          (format nil "/opt/flavored/~A/" (substitute #\/ #\- pair))
+                          tail))
+            "no flavor → its directory is skipped")))))
+
+(deftest optional-missing
+  (let ((c (lib "optional-lib")))
+    (ok (signals (an:load-native-library c) 'an:native-library-missing) "warns")
+    (ok (null (handler-bind ((warning #'muffle-warning)) (an:load-native-library c)))
+        "returns NIL, does not signal an error")
+    (ok (null (an:native-library-loaded-path c)))
+    (ok (null (an:library-loaded-path "asdf-native-fixture" "optional-lib")))
+    (ok (null (an:library-loaded-path "asdf-native-fixture" "no-such-component")))))
+
+(deftest optional-with-system-fallback
+  (let ((c (lib "optional-system-lib")))
+    (let ((w (handler-case (an:load-native-library c)
+               (an:native-library-missing (e) e))))
+      (ok (typep w 'an:native-library-missing) "system search failed too → warning, not error")
+      (ok (some (lambda (p) (search "(system search)" p)) (an:native-library-not-found-tried w))
+          "the system search is listed as tried"))))
+
 (deftest not-found
   (let ((c (lib "absent-lib")))
     (ok (null (an:find-native-library c)))
@@ -112,7 +167,18 @@
                    (ok (member (truename dir) cffi:*foreign-library-directories* :test #'equal)
                        "directory pushed for its dependencies")
                    (ok (= 43 (cffi:foreign-funcall "andemo_answer" :int 1 :int)) "symbol callable")
-                   (ok (asdf:operation-done-p (asdf:make-operation 'asdf:load-op) c) "done once loaded"))
+                   (ok (equal (an:library-loaded-path "asdf-native-fixture" "andemo") (truename out))
+                       "library-loaded-path")
+                   (ok (asdf:operation-done-p (asdf:make-operation 'asdf:load-op) c) "done once loaded")
+                   ;; A fresh component (a reloaded .asd) must not reopen it.
+                   (let ((fresh (make-instance 'an:native-library :name "andemo"
+                                                                  :parent (fixture-system))))
+                     (let ((before #+sbcl (length sb-alien::*shared-objects*) #-sbcl 0))
+                       (an:load-native-library fresh)
+                       (ok (= before #+sbcl (length sb-alien::*shared-objects*) #-sbcl 0)
+                           "same path is not reopened")
+                       (ok (= 43 (cffi:foreign-funcall "andemo_answer" :int 1 :int))
+                           "still callable"))))
                  (with-env ("VERDEMO_NATIVE" (uiop:native-namestring dir))
                    (let ((v (lib "verdemo")))
                      (ok (equal (file-namestring (an:find-native-library v))

@@ -1,5 +1,5 @@
 (defsystem "asdf-native"
-  :version "0.1.0"
+  :version "0.2.0"
   :description "ASDF component that loads a package's own native library by absolute path: env override, native/ (cl-repo overlay), lib/<os>-<arch>/ (checkout)"
   :author "egao1980"
   :license "MIT"
