@@ -124,10 +124,21 @@ list of paths tried."
             (when found (return-from find-native-library (values found (nreverse tried))))))))
     (values nil (nreverse tried))))
 
+(defun %shared-object-loaded-p (path)
+  "SBCL dlcloses and reopens a pathname it already has (a reloaded .asd makes
+new components); skip those."
+  #+sbcl (find (uiop:native-namestring path) sb-alien::*shared-objects*
+               :key (lambda (o) (ignore-errors (uiop:native-namestring
+                                                 (sb-alien::shared-object-pathname o))))
+               :test #'equal)
+  #-sbcl (declare (ignore path))
+  #-sbcl nil)
+
 (defun %load-path (path)
   (let ((dir (uiop:pathname-directory-pathname path)))
     (pushnew dir cffi:*foreign-library-directories* :test #'equal))
-  (cffi:load-foreign-library (uiop:native-namestring path)))
+  (unless (%shared-object-loaded-p path)
+    (cffi:load-foreign-library (uiop:native-namestring path))))
 
 (defun load-native-library (lib)
   "Load LIB once per image. Restarts on NATIVE-LIBRARY-NOT-FOUND: USE-VALUE

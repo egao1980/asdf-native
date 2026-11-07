@@ -112,7 +112,16 @@
                    (ok (member (truename dir) cffi:*foreign-library-directories* :test #'equal)
                        "directory pushed for its dependencies")
                    (ok (= 43 (cffi:foreign-funcall "andemo_answer" :int 1 :int)) "symbol callable")
-                   (ok (asdf:operation-done-p (asdf:make-operation 'asdf:load-op) c) "done once loaded"))
+                   (ok (asdf:operation-done-p (asdf:make-operation 'asdf:load-op) c) "done once loaded")
+                   ;; A fresh component (a reloaded .asd) must not reopen it.
+                   (let ((fresh (make-instance 'an:native-library :name "andemo"
+                                                                  :parent (fixture-system))))
+                     (let ((before #+sbcl (length sb-alien::*shared-objects*) #-sbcl 0))
+                       (an:load-native-library fresh)
+                       (ok (= before #+sbcl (length sb-alien::*shared-objects*) #-sbcl 0)
+                           "same path is not reopened")
+                       (ok (= 43 (cffi:foreign-funcall "andemo_answer" :int 1 :int))
+                           "still callable"))))
                  (with-env ("VERDEMO_NATIVE" (uiop:native-namestring dir))
                    (let ((v (lib "verdemo")))
                      (ok (equal (file-namestring (an:find-native-library v))
