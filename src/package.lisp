@@ -9,6 +9,9 @@
            #:native-library-not-found-component
            #:native-library-not-found-tried
            #:native-library-missing
+           #:native-library-unloadable
+           #:native-library-unloadable-path
+           #:native-library-unloadable-cause
            #:native-library-optional-p
            #:expand-directory-template
            #:library-loaded-path

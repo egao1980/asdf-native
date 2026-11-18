@@ -125,6 +125,30 @@
       (ok (some (lambda (p) (search "(system search)" p)) (an:native-library-not-found-tried w))
           "the system search is listed as tried"))))
 
+(deftest optional-found-but-unloadable
+  ;; A file with the library's name that the dynamic linker refuses, as a CUDA
+  ;; build is refused on a host without libcuda.
+  (let* ((dir (uiop:ensure-directory-pathname
+               (merge-pathnames (format nil "asdf-native-bad-~(~36R~)/" (random (expt 36 8)))
+                                (uiop:temporary-directory))))
+         (c (lib "optional-lib"))
+         (file (merge-pathnames (first (an:native-library-names c)) dir)))
+    (ensure-directories-exist dir)
+    (with-open-file (out file :direction :output :element-type '(unsigned-byte 8))
+      (write-sequence (make-array 64 :element-type '(unsigned-byte 8) :initial-element 7) out))
+    (unwind-protect
+        (with-env ("OPTIONAL_LIB_NATIVE" (uiop:native-namestring dir))
+          (let ((w (handler-case (an:load-native-library c)
+                     (an:native-library-unloadable (e) e))))
+            (ok (typep w 'an:native-library-unloadable) "a warning, not an error")
+            (ok (typep w 'an:native-library-missing) "callers muffling missing libraries still do")
+            (ok (equal (truename file) (an:native-library-unloadable-path w)))
+            (ok (typep (an:native-library-unloadable-cause w) 'cffi:load-foreign-library-error)))
+          (ok (null (handler-bind ((warning #'muffle-warning)) (an:load-native-library c)))
+              "returns NIL")
+          (ok (null (an:native-library-loaded-path c))))
+      (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))
+
 (deftest not-found
   (let ((c (lib "absent-lib")))
     (ok (null (an:find-native-library c)))
