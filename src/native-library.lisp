@@ -79,13 +79,13 @@ directory (\"/opt/homebrew/opt/icu4c/lib/\") that must not shadow the overlay.")
 it, e.g. a CUDA build on a host without the NVIDIA driver. A subtype of
 NATIVE-LIBRARY-MISSING: the system loads without it.")
   (:report (lambda (c s)
+             ;; No ~<newline> continuation: it breaks on a CRLF checkout.
              (let ((lib (native-library-not-found-component c)))
-               (format s "Optional native library ~A of system ~A found at ~A but not ~
-                          loadable; loading without it.~%  ~A"
+               (format s "Optional native library ~A of system ~A found at ~A but not loadable; "
                        (asdf:component-name lib)
                        (asdf:component-name (asdf:component-system lib))
-                       (native-library-unloadable-path c)
-                       (native-library-unloadable-cause c))))))
+                       (native-library-unloadable-path c))
+               (format s "loading without it.~%  ~A" (native-library-unloadable-cause c))))))
 
 (defun host-pair ()
   "<os>-<arch> as used by lib/ directories and cl-repo overlays."
