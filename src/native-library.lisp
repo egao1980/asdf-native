@@ -72,6 +72,21 @@ directory (\"/opt/homebrew/opt/icu4c/lib/\") that must not shadow the overlay.")
                        (asdf:component-name lib)
                        (asdf:component-name (asdf:component-system lib)))))))
 
+(define-condition native-library-unloadable (native-library-missing)
+  ((path :initarg :path :reader native-library-unloadable-path)
+   (cause :initarg :cause :reader native-library-unloadable-cause))
+  (:documentation "An :OPTIONAL library was found but the dynamic linker refused
+it, e.g. a CUDA build on a host without the NVIDIA driver. A subtype of
+NATIVE-LIBRARY-MISSING: the system loads without it.")
+  (:report (lambda (c s)
+             ;; No ~<newline> continuation: it breaks on a CRLF checkout.
+             (let ((lib (native-library-not-found-component c)))
+               (format s "Optional native library ~A of system ~A found at ~A but not loadable; "
+                       (asdf:component-name lib)
+                       (asdf:component-name (asdf:component-system lib))
+                       (native-library-unloadable-path c))
+               (format s "loading without it.~%  ~A" (native-library-unloadable-cause c))))))
+
 (defun host-pair ()
   "<os>-<arch> as used by lib/ directories and cl-repo overlays."
   (format nil "~A-~A"
@@ -194,24 +209,37 @@ new components); skip those."
   #-sbcl (declare (ignore path))
   #-sbcl nil)
 
+(defun %open-library (designator)
+  "CFFI:LOAD-FOREIGN-LIBRARY with floating-point traps masked: a library's
+static initializers may raise FP exceptions (overflow, invalid) that SBCL
+would otherwise trap inside dlopen."
+  #+sbcl
+  (sb-int:with-float-traps-masked (:overflow :invalid :divide-by-zero :inexact :underflow)
+    (cffi:load-foreign-library designator))
+  #-sbcl
+  (cffi:load-foreign-library designator))
+
 (defun %load-path (path)
   (let ((dir (uiop:pathname-directory-pathname path)))
     (pushnew dir cffi:*foreign-library-directories* :test #'equal))
   (unless (%shared-object-loaded-p path)
-    (cffi:load-foreign-library (uiop:native-namestring path))))
+    (%open-library (uiop:native-namestring path))))
 
 (defun %load-from-system (lib)
   "Try each name through the dynamic linker's own search. → the name that
 loaded, or NIL."
   (dolist (name (native-library-names lib))
-    (handler-case (progn (cffi:load-foreign-library name) (return name))
+    (handler-case (progn (%open-library name) (return name))
       (cffi:load-foreign-library-error () nil))))
 
 (defun load-native-library (lib)
   "Load LIB once per image: a search directory, then (with :SYSTEM T) the
 system's own libraries. Missing and :OPTIONAL → warning NATIVE-LIBRARY-MISSING,
-NIL. Missing otherwise → NATIVE-LIBRARY-NOT-FOUND with restarts USE-VALUE (a
-pathname to load instead) and CONTINUE (skip; the system loads without it)."
+NIL. Found but refused by the dynamic linker (a missing dependency such as
+the CUDA driver) and :OPTIONAL → warning NATIVE-LIBRARY-UNLOADABLE, NIL; not
+optional, the CFFI error propagates. Missing otherwise →
+NATIVE-LIBRARY-NOT-FOUND with restarts USE-VALUE (a pathname to load instead)
+and CONTINUE (skip; the system loads without it)."
   (or (native-library-loaded-path lib)
       (multiple-value-bind (path tried) (find-native-library lib)
         (let ((system (and (null path) (native-library-system-fallback-p lib)
@@ -219,7 +247,14 @@ pathname to load instead) and CONTINUE (skip; the system loads without it)."
           (when (and (null path) (native-library-system-fallback-p lib))
             (setf tried (append tried (mapcar (lambda (n) (format nil "~A (system search)" n))
                                               (native-library-names lib)))))
-          (cond (path
+          (cond ((and path (native-library-optional-p lib))
+                 (handler-case (progn (%load-path path)
+                                 (setf (native-library-loaded-path lib) path))
+                   (cffi:load-foreign-library-error (e)
+                     (warn 'native-library-unloadable
+                           :component lib :tried tried :path path :cause e)
+                     nil)))
+                (path
                  (%load-path path)
                  (setf (native-library-loaded-path lib) path))
                 (system
