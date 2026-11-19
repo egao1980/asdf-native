@@ -273,18 +273,27 @@ and CONTINUE (skip; the system loads without it)."
                      :report "Skip this library."
                      nil))))))))
 
-;;; ASDF plumbing: nothing to compile, no input or output files.
+;;; ASDF plumbing: nothing to compile and no output files. LOAD-OP's input is
+;;; the library file it would load, so its stamp is that file's date.
 
 (defmethod asdf:component-relative-pathname ((c native-library)) nil)
 (defmethod asdf:input-files ((o asdf:operation) (c native-library)) nil)
+(defun %stamp-files (c)
+  (let ((path (or (native-library-loaded-path c) (find-native-library c))))
+    (and (pathnamep path) (list path))))
+(defmethod asdf:input-files ((o asdf:load-op) (c native-library)) (%stamp-files c))
+(defmethod asdf:input-files ((o asdf:load-source-op) (c native-library)) (%stamp-files c))
 (defmethod asdf:output-files ((o asdf:operation) (c native-library)) (values nil t))
 (defmethod asdf:perform ((o asdf:compile-op) (c native-library)) nil)
 (defmethod asdf:perform ((o asdf:load-op) (c native-library)) (load-native-library c))
 (defmethod asdf:perform ((o asdf:load-source-op) (c native-library)) (load-native-library c))
 
-;;; A fresh image (or a restored core) has none loaded yet: redo LOAD-OP.
-(defmethod asdf:operation-done-p ((o asdf:load-op) (c native-library))
-  (and (native-library-loaded-path c) t))
+;;; No OPERATION-DONE-P method (issue #5). ASDF already redoes LOAD-OP in a
+;;; fresh image, where the component has no recorded operation time; what
+;;; follows it then sees the library's stamp and keeps its fasls. Returning
+;;; NIL there instead marked the action out of date, and every later file of
+;;; a :SERIAL T system recompiled in every image. A newer library file still
+;;; makes them recompile.
 
 (defun library-loaded-path (system name)
   "Path the :NATIVE-LIBRARY component NAME of SYSTEM loaded, or NIL (not

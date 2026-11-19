@@ -29,6 +29,9 @@ soname can't take its place. Its directory goes onto
 `cffi:*foreign-library-directories*`, so the libraries it depends on resolve
 there too. `LD_LIBRARY_PATH` is never needed.
 
+The library loads again in every fresh image, but the fasls of the files after
+it stay valid: they recompile only when the library file is newer than them.
+
 ## Name variants
 
 With no options, `(:native-library "foo")` tries the names below. `:versions`
