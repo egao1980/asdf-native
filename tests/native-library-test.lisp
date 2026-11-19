@@ -212,3 +212,94 @@
             ;; Windows keeps a loaded DLL locked; leave the temp dir there.
             (handler-case (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)
               (file-error () nil)))))))
+
+;;; Issue #5: in a :SERIAL T system the library's LOAD-OP runs in every fresh
+;;; image, and must not make the cached fasls after it look stale. Each run
+;;; below is a separate SBCL process on a copy of tests/fixture/serial/.
+
+(defun child-source-registry (extra-dir)
+  "Every directory of a system the test image has, plus EXTRA-DIR."
+  (let ((dirs '()))
+    (dolist (name (asdf:registered-systems))
+      (let* ((s (asdf:find-system name nil))
+             (file (and s (not (member (asdf:primary-system-name s) '("asdf" "uiop")
+                                       :test #'string=))
+                        (asdf:system-source-file s))))
+        (when file
+          (pushnew (namestring (uiop:pathname-directory-pathname file)) dirs :test #'string=))))
+    `(:source-registry (:directory ,(namestring extra-dir))
+                       ,@(mapcar (lambda (d) `(:directory ,d)) dirs)
+                       :ignore-inherited-configuration)))
+
+(defun run-child (dir)
+  "Load asdf-native-serial from DIR in a fresh SBCL. → the names of the
+fixture's files it compiled, and what ANSWER returned."
+  (let ((script (merge-pathnames "child.lisp" dir)))
+    ;; Text, not printed forms: this package does not exist in the child.
+    (with-open-file (out script :direction :output :if-exists :supersede)
+      (let ((*package* (find-package '#:keyword)))
+        (format out "(require \"asdf\")
+(asdf:initialize-source-registry '~S)
+(asdf:initialize-output-translations '(:output-translations (~S t) :inherit-configuration))
+(asdf:load-system \"asdf-native\")
+(defmethod asdf:perform :after ((o asdf:compile-op) (c asdf:cl-source-file))
+  (when (string= (asdf:primary-system-name c) \"asdf-native-serial\")
+    (format t \"~~&COMPILED ~~A~~%\" (asdf:component-name c))))
+(asdf:load-system \"asdf-native-serial\")
+(format t \"~~&ANSWER ~~A~~%\" (funcall (find-symbol \"ANSWER\" \"ASDF-NATIVE-SERIAL\") 1))
+"
+                (child-source-registry dir) (namestring dir))))
+    (multiple-value-bind (output error-output status)
+        (uiop:run-program (list #+sbcl (uiop:native-namestring sb-ext:*runtime-pathname*)
+                                #+sbcl "--core" #+sbcl (uiop:native-namestring sb-ext:*core-pathname*)
+                                "--non-interactive" "--no-sysinit" "--no-userinit"
+                                "--load" (uiop:native-namestring script))
+                          :output :string :error-output :string :ignore-error-status t)
+      (unless (zerop status)
+        (error "Child image failed (~A):~%~A~%~A" status output error-output))
+      (let ((compiled '()) (answer nil))
+        (dolist (line (uiop:split-string output :separator '(#\Newline)))
+          (let ((line (string-right-trim '(#\Return) line)))
+            (cond ((uiop:string-prefix-p "COMPILED " line)
+                   (push (subseq line 9) compiled))
+                  ((uiop:string-prefix-p "ANSWER " line)
+                   (setf answer (parse-integer line :start 7))))))
+        (values (sort compiled #'string<) answer)))))
+
+(defun build-andemo (cc dir)
+  (let ((out (merge-pathnames (first (an:default-file-names "andemo")) dir)))
+    (ensure-directories-exist out)
+    (uiop:run-program (list cc "-shared" "-fPIC" "-o" (uiop:native-namestring out)
+                            (uiop:native-namestring (merge-pathnames "andemo.c" *fixture-dir*)))
+                      :error-output :string)
+    out))
+
+(deftest serial-fasls-survive-fresh-images
+  (let ((cc (compiler)))
+    (cond
+      ((null cc) (skip "no C compiler on PATH"))
+      #-sbcl (t (skip "child images are spawned on SBCL only"))
+      (t
+       (let ((dir (uiop:ensure-directory-pathname
+                   (merge-pathnames (format nil "asdf-native-serial-~(~36R~)/" (random (expt 36 8)))
+                                    (uiop:temporary-directory)))))
+         (ensure-directories-exist dir)
+         (dolist (f (uiop:directory-files (merge-pathnames "serial/" *fixture-dir*)))
+           (uiop:copy-file f (merge-pathnames (file-namestring f) dir)))
+         (build-andemo cc (merge-pathnames "native/" dir))
+         (unwind-protect
+              (progn
+                (multiple-value-bind (compiled answer) (run-child dir)
+                  (ok (equal compiled '("after" "before" "last")) "first image compiles all")
+                  (ok (eql answer 43) "and calls the library"))
+                (multiple-value-bind (compiled answer) (run-child dir)
+                  (ok (null compiled) "second image compiles nothing")
+                  (ok (eql answer 43) "but still loads the library"))
+                ;; A newer library: the files after it recompile, the one before does not.
+                (sleep 1.5)
+                (build-andemo cc (merge-pathnames "native/" dir))
+                (multiple-value-bind (compiled answer) (run-child dir)
+                  (ok (equal compiled '("after" "last")) "a changed library recompiles what follows it")
+                  (ok (eql answer 43)))
+                (ok (null (run-child dir)) "then nothing again"))
+           (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)))))))
